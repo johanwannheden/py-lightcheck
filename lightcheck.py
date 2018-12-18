@@ -9,6 +9,7 @@ import signal
 import sys
 import paho.mqtt.client as mqtt
 import logging
+import json
 
 TSLaddr = 0x39 #Default I2C address, alternate 0x29, 0x49 
 TSLcmd = 0x80 #Command
@@ -32,25 +33,26 @@ writebyte = bus.write_byte_data
 logging.basicConfig(filename='lightcheck.log',level=logging.DEBUG)
 
 class Data:
-    def __init__(self, ch0, ch1):
-        self.ch0 = ch0
-        self.ch1 = ch1
+	def __init__(self, light):
+		self.light = light
+		self.interval = None
+		self.stamp = None
 
 def signal_handler(sig, frame):
-        writebyte(TSLaddr, 0x00 | TSLcmd, TSLoff)
-        client.publish("light/status/", "stopped at " + time.asctime(time.localtime(time.time())))
-        logging.info('sensor deactivated')
-        sys.exit(0)
+		writebyte(TSLaddr, 0x00 | TSLcmd, TSLoff)
+		client.publish("light/status/", "stopped at " + time.asctime(time.localtime(time.time())))
+		logging.info('sensor deactivated')
+		sys.exit(0)
 
 # Register the SIGINT handler
 signal.signal(signal.SIGINT, signal_handler)
 
 # The callback for when the client receives a CONNACK response from the server.
 def on_connect(client, userdata, rc):
-    logging.info("Connected with result code "+str(rc))
-    # Subscribing in on_connect() means that if we lose the connection and
-    # reconnect then subscriptions will be renewed.
-    client.subscribe("$SYS/#")
+	logging.info("Connected with result code "+str(rc))
+	# Subscribing in on_connect() means that if we lose the connection and
+	# reconnect then subscriptions will be renewed.
+	client.subscribe("$SYS/#")
 
 client = mqtt.Client(client_id="light_reader", transport="tcp")
 client.on_connect = on_connect
@@ -58,9 +60,8 @@ client.on_connect = on_connect
 client.connect("diskstation", 1883, 60)
 client.publish("light/status", "reading")
 
-def publish_result(data, timeDiff):
-	stamp = time.asctime(time.localtime(time.time()))
-	payload = '{}: ch0: {}, ch1: {} [{}s]'.format(stamp, data.ch0, data.ch1, timeDiff)
+def publish_result(data):
+	payload = json.dumps(data.__dict__)
 	client.publish("light/data/", payload)
 
 def count_tick(ticks):
@@ -71,27 +72,25 @@ def read_data(channel):
 	try:
 		return bus.read_i2c_block_data(TSLaddr, channel | TSLcmd, 2)
 	except OSError as err:
-		logging.error("Could not read data from bus")
+		logging.error("Could not read data from bus: " | err)
 		return None
 
 def lightcheck():
-	#Read Ch0 Word
-	data0 = read_data(chan0)
-	#Read CH1 Word
-	data1 = read_data(chan1)
-		
-	if (data0 == None or data1 == None):
+	#Read channel 0
+	data = read_data(chan0)
+	
+	if (data == None):
 		return None
 
-	# Convert the data to Integer
-	ch0 = data0[1] * 256 + data0[0]
-	ch1 = data1[1] * 256 + data1[0]
+	# Convert to numeric
+	light = data[1] * 256 + data[0]
 	
-	vResults = ch0-ch1 #get visable light results
-	if ch0 >= 50 and ch1 >= 5: #check against reading threshold 
-		return Data(ch0, ch1)
+	if light >= 20: #check against reading threshold 
+		return Data(light)
 	return None
 if __name__ == "__main__":
+	logging.info("starting")
+
 	writebyte(TSLaddr, 0x00 | TSLcmd, TSLon) #Power On
 	#Gain x1 at 402ms is the default so this line not required 
 	#but change for different sensitivity
@@ -108,8 +107,11 @@ if __name__ == "__main__":
 		if data is not None:
 			counter += 1
 			count_tick(counter)
-			timeDiff = round(time.time() - previousTimestamp, 1)
+
+			data.interval = round(time.time() - previousTimestamp, 1)
+			data.stamp = time.asctime(time.localtime(time.time()))
+			
 			previousTimestamp = time.time()
-			publish_result(data, timeDiff)
+			publish_result(data)
 			time.sleep(0.5)
 	writebyte(TSLaddr, 0x00 | TSLcmd, TSLoff) #Power Off
