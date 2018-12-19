@@ -3,15 +3,18 @@
 #
 # 1000 impulses / kWh
 #
-import smbus
-import time
 import datetime
-import dateutil.parser
+import json
+import logging
 import signal
 import sys
+import time
+from typing import List
+
+import dateutil.parser
+
 import paho.mqtt.client as mqtt
-import logging
-import json
+import smbus
 
 TSLaddr = 0x39  # Default I2C address, alternate 0x29, 0x49
 TSLcmd = 0x80  # Command
@@ -42,20 +45,46 @@ class Data:
         self.stamp = datetime.datetime.now().isoformat()
 
 
+class Metric:
+    def __init__(self, total: int, by_hour: List[int], time_thousand):
+        self.total = total
+        self.by_hour = by_hour
+        self.time_thousand = time_thousand
+
+
 class Counter:
     def __init__(self):
         self.counter_total = 0
-        self.counter_hour = 0
+        self.counter_by_hour = [0 for _ in range(24)]
         self.current_hour = datetime.datetime.now().hour
+        self.start_time_thousand = datetime.datetime.now()
 
     def register_tick(self):
         self.counter_total += 1
         hour = datetime.datetime.now().hour
-        if (hour > self.current_hour):
+        if (hour != self.current_hour):
             self.current_hour = hour
-            self.counter_hour = 1
+            self.counter_by_hour[hour] = 1
         else:
-            self.counter_hour += 1
+            self.counter_by_hour[hour] += 1
+
+    def time_thousand(self):
+        if (self.counter_total % 1000 == 0):
+            current_time = datetime.datetime.now()
+            time_in_seconds = (
+                current_time - self.start_time_thousand).total_seconds()
+
+            # reset
+            self.start_time_thousand = current_time
+
+            return time_in_seconds
+        return -1
+
+    def metric(self):
+        return Metric(
+            self.counter_total,
+            self.counter_by_hour,
+            self.time_thousand())
 
 
 def signal_handler(sig, frame):
@@ -91,11 +120,12 @@ def publish_result(data):
     client.publish("light/data/", payload)
 
 
-def publish_ticks(counter: Counter):
-    client.publish("light/metrics/ticks/total",
-                   counter.counter_total, 0, True)
-    client.publish("light/metrics/ticks/hour",
-                   counter.counter_hour, 0, True)
+def publish_ticks(metric: Metric):
+    client.publish("light/metrics", json.dumps(metric.__dict__), 0, True)
+    seconds_since_last_thousand = metric.time_thousand
+    if (seconds_since_last_thousand >= 0):
+        client.publish("light/metrics/thousand",
+                       seconds_since_last_thousand, 0, True)
 
 
 def read_data(channel):
@@ -139,7 +169,7 @@ if __name__ == "__main__":
         data = lightcheck()
         if data is not None:
             counter.register_tick()
-            publish_ticks(counter)
+            publish_ticks(counter.metric())
 
             data.interval = round(time.time() - previousTimestamp, 1)
 
