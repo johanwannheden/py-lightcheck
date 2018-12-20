@@ -117,7 +117,7 @@ client.publish("light/status", "reading")
 
 def publish_result(data):
     payload = json.dumps(data.__dict__)
-    client.publish("light/data/", payload)
+    client.publish("light/data", payload)
 
 
 def publish_ticks(metric: Metric):
