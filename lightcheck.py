@@ -46,10 +46,10 @@ class Data:
 
 
 class Metric:
-    def __init__(self, total: int, by_hour: List[int], time_thousand):
+    def __init__(self, total: int, by_hour: List[int], by_minute: List[int]):
         self.total = total
-        self.by_hour = by_hour
-        self.time_thousand = time_thousand
+        self.by_hour = by_hour  # of 24 hours
+        self.by_minute = by_minute  # of 60 minutes
 
 
 class Counter:
@@ -57,34 +57,31 @@ class Counter:
         self.counter_total = 0
         self.counter_by_hour = [0 for _ in range(24)]
         self.current_hour = datetime.datetime.now().hour
-        self.start_time_thousand = datetime.datetime.now()
+        self.counter_by_minute = [0 for _ in range(60)]
+        self.current_minute = datetime.datetime.now().minute
 
     def register_tick(self):
         self.counter_total += 1
+        # hour
         hour = datetime.datetime.now().hour
         if (hour != self.current_hour):
             self.current_hour = hour
             self.counter_by_hour[hour] = 1
         else:
             self.counter_by_hour[hour] += 1
-
-    def time_thousand(self):
-        if (self.counter_total % 1000 == 0):
-            current_time = datetime.datetime.now()
-            time_in_seconds = (
-                current_time - self.start_time_thousand).total_seconds()
-
-            # reset
-            self.start_time_thousand = current_time
-
-            return time_in_seconds
-        return -1
+        # minute
+        minute = datetime.datetime.now().minute
+        if (minute != self.current_minute):
+            self.current_minute = minute
+            self.counter_by_minute[minute] = 1
+        else:
+            self.counter_by_minute[minute] += 1
 
     def metric(self):
         return Metric(
             self.counter_total,
             self.counter_by_hour,
-            self.time_thousand())
+            self.counter_by_minute)
 
 
 def signal_handler(sig, frame):
@@ -122,10 +119,6 @@ def publish_result(data):
 
 def publish_ticks(metric: Metric):
     client.publish("light/metrics", json.dumps(metric.__dict__), 0, True)
-    seconds_since_last_thousand = metric.time_thousand
-    if (seconds_since_last_thousand >= 0):
-        client.publish("light/metrics/thousand",
-                       seconds_since_last_thousand, 0, True)
 
 
 def read_data(channel):
