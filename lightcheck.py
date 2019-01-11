@@ -125,7 +125,7 @@ def read_data(channel):
     try:
         return bus.read_i2c_block_data(TSLaddr, channel | TSLcmd, 2)
     except OSError as err:
-        logging.error("Could not read data from bus: " | err)
+        logging.error("Could not read data from bus: " | str(err))
         return None
 
 
